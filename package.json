@@ -1,0 +1,20 @@
+{
+  "name": "simulacra",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mini Cidade Digital — personas sintéticas autônomas baseadas em Generative Agents (Stanford, 2304.03442)",
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=server & npm run dev --workspace=client",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build --workspace=server && npm run build --workspace=client",
+    "install:all": "npm install"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

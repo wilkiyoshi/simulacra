@@ -1,0 +1,28 @@
+# Dependências
+node_modules/
+**/node_modules/
+
+# Builds
+dist/
+build/
+**/dist/
+
+# Variáveis de ambiente (NUNCA commitar chaves de API)
+.env
+.env.local
+**/.env
+
+# Banco de dados local
+*.sqlite
+*.sqlite3
+*.db
+data/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editores / SO
+.DS_Store
+.vscode/
+.idea/

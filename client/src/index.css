@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #16161e;
+  color: #c0caf5;
+}
+
+/* Garante que o canvas do Phaser use renderização "crocante" (pixel art). */
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
