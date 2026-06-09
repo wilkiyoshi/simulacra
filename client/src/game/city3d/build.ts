@@ -1,32 +1,35 @@
 /**
  * build.ts
  * --------
- * Geração procedural da pequena cidade 3D (estática): layout de quarteirões e
- * ruas, prédios com fachadas/janelas, calçadas e árvores. Tudo é construído
- * uma vez como um THREE.Group e inserido na cena via <primitive>.
+ * Geração procedural da pequena cidade 3D. Produz uma mistura de:
+ *   - casas de moradia (1 andar + telhado);
+ *   - lojas comerciais com toldo + placa (padaria, restaurante, lanchonete,
+ *     sorveteria, oficina, roupas e várias outras), voltadas para a rua;
+ *   - prédios residenciais baixos (2 a 4 andares).
+ * Mais ruas com faixas, calçadas, praça central e árvores.
  *
- * Mantém o mesmo sistema de coordenadas em "tiles" do motor cognitivo
- * (grade 25x18), então as personas continuam usando suas posições de grade.
+ * Mantém o sistema de coordenadas em "tiles" (grade 25x18) do motor cognitivo.
  */
 import * as THREE from 'three';
 
 // --- Constantes de mundo ----------------------------------------------------
-export const TILE = 2; // unidades 3D por tile
+export const TILE = 2;
 export const GRID_W = 25;
 export const GRID_H = 18;
 export const FLOOR_H = 1.4;
 
-/** Converte coordenada de tile (x,y) para posição de mundo (X,Z) centralizada. */
 export function worldPos(x: number, y: number): [number, number] {
   return [(x - (GRID_W - 1) / 2) * TILE, (y - (GRID_H - 1) / 2) * TILE];
 }
 
-/** Avenidas a cada 5 tiles formam a malha de ruas. */
 export function isRoad(x: number, y: number): boolean {
   return x % 5 === 0 || y % 5 === 0;
 }
 
-/** Bloco central reservado como praça/parque (sem prédios). */
+function inBounds(x: number, y: number): boolean {
+  return x >= 0 && y >= 0 && x < GRID_W && y < GRID_H;
+}
+
 function isPark(x: number, y: number): boolean {
   return x >= 11 && x <= 14 && y >= 6 && y <= 9;
 }
@@ -37,24 +40,63 @@ function hash(x: number, y: number): number {
   return h;
 }
 
-export interface BuildingInfo {
+const keyOf = (x: number, y: number) => `${x},${y}`;
+
+// --- Catálogo de lojas ------------------------------------------------------
+
+interface ShopType {
+  name: string;
+  emoji: string;
+  color: number; // cor do toldo
+}
+
+const SHOPS: ShopType[] = [
+  { name: 'Padaria', emoji: '🥖', color: 0xe8a33d },
+  { name: 'Restaurante', emoji: '🍝', color: 0xc0392b },
+  { name: 'Lanchonete', emoji: '🍔', color: 0xe67e22 },
+  { name: 'Sorveteria', emoji: '🍦', color: 0xff6fae },
+  { name: 'Oficina', emoji: '🔧', color: 0x5d6d7e },
+  { name: 'Roupas', emoji: '👕', color: 0x8e44ad },
+  { name: 'Livraria', emoji: '📚', color: 0x2e86c1 },
+  { name: 'Farmácia', emoji: '💊', color: 0x27ae60 },
+  { name: 'Flores', emoji: '🌸', color: 0xff8fb1 },
+  { name: 'Café', emoji: '☕', color: 0x8b5a2b },
+  { name: 'Mercado', emoji: '🛒', color: 0xf1c40f },
+  { name: 'Pet Shop', emoji: '🐾', color: 0x16a085 },
+];
+
+export type Dir = 'n' | 's' | 'e' | 'w';
+const DIR_YAW: Record<Dir, number> = { s: 0, n: Math.PI, e: Math.PI / 2, w: -Math.PI / 2 };
+
+export type StructKind = 'house' | 'shop' | 'building';
+
+export interface Structure {
   x: number;
   y: number;
+  kind: StructKind;
   floors: number;
   variant: number;
+  shop: number; // índice em SHOPS (apenas se kind === 'shop')
+  dir: Dir; // direção da fachada (para a rua)
 }
 
 export interface CityLayout {
-  buildings: BuildingInfo[];
+  structures: Structure[];
   occupied: Set<string>;
   parks: { x: number; y: number }[];
 }
 
-const keyOf = (x: number, y: number) => `${x},${y}`;
+/** Direção do tile de rua adjacente (frente do imóvel). */
+function frontDir(x: number, y: number): Dir | undefined {
+  if (inBounds(x, y + 1) && isRoad(x, y + 1)) return 's';
+  if (inBounds(x, y - 1) && isRoad(x, y - 1)) return 'n';
+  if (inBounds(x + 1, y) && isRoad(x + 1, y)) return 'e';
+  if (inBounds(x - 1, y) && isRoad(x - 1, y)) return 'w';
+  return undefined;
+}
 
-/** Gera o layout determinístico da cidade. */
 export function generateLayout(): CityLayout {
-  const buildings: BuildingInfo[] = [];
+  const structures: Structure[] = [];
   const occupied = new Set<string>();
   const parks: { x: number; y: number }[] = [];
 
@@ -66,34 +108,42 @@ export function generateLayout(): CityLayout {
         continue;
       }
       const h = hash(x, y);
-      // ~72% dos tiles internos viram prédios; o resto é praça aberta/árvore.
-      if (h % 100 < 72) {
-        buildings.push({ x, y, floors: 2 + (h % 7), variant: h % FACADE_VARIANTS });
-        occupied.add(keyOf(x, y));
-      } else if (h % 7 === 0) {
+      const adj = frontDir(x, y);
+
+      // Algumas esquinas/tiles ficam abertos (praça) com árvore eventual.
+      if (h % 17 === 0) {
         parks.push({ x, y });
+        continue;
       }
+
+      let kind: StructKind;
+      let dir: Dir;
+      if (adj) {
+        // Tiles de frente para a rua: maioria comércio, resto casas.
+        kind = h % 100 < 58 ? 'shop' : 'house';
+        dir = adj;
+      } else {
+        // Interior do quarteirão: casas e alguns prédios baixos.
+        kind = h % 100 < 30 ? 'building' : 'house';
+        dir = 's';
+      }
+
+      const floors = kind === 'building' ? 2 + (h % 3) : 1 + (h % 2);
+      structures.push({ x, y, kind, floors, variant: h % FACADE_VARIANTS, shop: h % SHOPS.length, dir });
+      occupied.add(keyOf(x, y));
     }
   }
-  return { buildings, occupied, parks };
+  return { structures, occupied, parks };
 }
 
-/**
- * Para um tile ocupado por prédio, encontra o tile aberto mais próximo — assim
- * as personas são renderizadas nas ruas/praças, nunca dentro de prédios.
- */
-export function nearestOpen(
-  occupied: Set<string>,
-  x: number,
-  y: number,
-): [number, number] {
+export function nearestOpen(occupied: Set<string>, x: number, y: number): [number, number] {
   if (!occupied.has(keyOf(x, y))) return [x, y];
   for (let r = 1; r <= 3; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         const nx = x + dx;
         const ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= GRID_W || ny >= GRID_H) continue;
+        if (!inBounds(nx, ny)) continue;
         if (!occupied.has(keyOf(nx, ny))) return [nx, ny];
       }
     }
@@ -101,27 +151,40 @@ export function nearestOpen(
   return [x, y];
 }
 
-// --- Texturas de fachada ----------------------------------------------------
+// --- Texturas ---------------------------------------------------------------
 
 const FACADE_VARIANTS = 6;
 const facadeCache = new Map<number, { map: THREE.CanvasTexture; emissive: THREE.CanvasTexture }>();
-const materialCache = new Map<string, THREE.Material[]>();
+const buildingMatCache = new Map<string, THREE.Material[]>();
+const signCache = new Map<number, THREE.CanvasTexture>();
+const awningCache = new Map<number, THREE.CanvasTexture>();
+const colorMatCache = new Map<number, THREE.MeshStandardMaterial>();
+const awningMatCache = new Map<number, THREE.Material>();
+const signMatCache = new Map<number, THREE.Material>();
+let glassMat: THREE.Material | null = null;
 
+function solidMat(color: number, roughness = 0.85): THREE.MeshStandardMaterial {
+  const cached = colorMatCache.get(color);
+  if (cached) return cached;
+  const m = new THREE.MeshStandardMaterial({ color, roughness });
+  colorMatCache.set(color, m);
+  return m;
+}
+
+/** Fachada com janelas (para os prédios residenciais). */
 function facadeBase(variant: number): { map: THREE.CanvasTexture; emissive: THREE.CanvasTexture } {
   const cached = facadeCache.get(variant);
   if (cached) return cached;
 
   const size = 128;
   const hue = (variant * 53 + 200) % 360;
-
-  // Canvas da cor + canvas de emissão (apenas janelas acesas brilham).
   const map = document.createElement('canvas');
   const emis = document.createElement('canvas');
   map.width = map.height = emis.width = emis.height = size;
   const mc = map.getContext('2d')!;
   const ec = emis.getContext('2d')!;
 
-  mc.fillStyle = `hsl(${hue}, 14%, ${26 + (variant % 3) * 5}%)`;
+  mc.fillStyle = `hsl(${hue}, 16%, ${34 + (variant % 3) * 5}%)`;
   mc.fillRect(0, 0, size, size);
   ec.fillStyle = '#000';
   ec.fillRect(0, 0, size, size);
@@ -132,13 +195,12 @@ function facadeBase(variant: number): { map: THREE.CanvasTexture; emissive: THRE
   const gap = 7;
   const w = (size - pad * 2 - gap * (cols - 1)) / cols;
   const h = (size - pad * 2 - gap * (rows - 1)) / rows;
-
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const lit = (variant + r * 7 + c * 13) % 5 < 2;
       const px = pad + c * (w + gap);
       const py = pad + r * (h + gap);
-      mc.fillStyle = lit ? 'hsl(45, 85%, 66%)' : 'hsl(210, 40%, 20%)';
+      mc.fillStyle = lit ? 'hsl(45, 85%, 66%)' : 'hsl(210, 40%, 24%)';
       mc.fillRect(px, py, w, h);
       mc.strokeStyle = 'rgba(0,0,0,0.4)';
       mc.lineWidth = 2;
@@ -161,10 +223,9 @@ function facadeBase(variant: number): { map: THREE.CanvasTexture; emissive: THRE
   return result;
 }
 
-/** Materiais (6 faces) de um prédio: paredes com janelas + topo/base lisos. */
 function buildingMaterials(variant: number, floors: number): THREE.Material[] {
   const cacheKey = `${variant}-${floors}`;
-  const cached = materialCache.get(cacheKey);
+  const cached = buildingMatCache.get(cacheKey);
   if (cached) return cached;
 
   const base = facadeBase(variant);
@@ -182,49 +243,147 @@ function buildingMaterials(variant: number, floors: number): THREE.Material[] {
     roughness: 0.75,
     metalness: 0.08,
   });
-  const roofHue = (variant * 53 + 200) % 360;
-  const roof = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(`hsl(${roofHue}, 10%, 30%)`),
-    roughness: 0.9,
-  });
-
-  // Ordem de faces da BoxGeometry: +x, -x, +y(topo), -y, +z, -z
+  const roof = solidMat(0x2b2f38, 0.9);
   const mats = [wall, wall, roof, roof, wall, wall];
-  materialCache.set(cacheKey, mats);
+  buildingMatCache.set(cacheKey, mats);
   return mats;
 }
 
-// --- Construção da cidade (THREE.Group) -------------------------------------
+/** Placa da loja (emoji + nome) — fundo creme. */
+function signTexture(shopIdx: number): THREE.CanvasTexture {
+  const cached = signCache.get(shopIdx);
+  if (cached) return cached;
+  const shop = SHOPS[shopIdx];
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 96;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fbf3df';
+  ctx.fillRect(0, 0, 256, 96);
+  ctx.strokeStyle = '#26201a';
+  ctx.lineWidth = 6;
+  ctx.strokeRect(3, 3, 250, 90);
+  ctx.textBaseline = 'middle';
+  ctx.font = '54px serif';
+  ctx.fillText(shop.emoji, 14, 50);
+  ctx.fillStyle = '#26201a';
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillText(shop.name, 84, 52);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  signCache.set(shopIdx, tex);
+  return tex;
+}
+
+/** Toldo listrado na cor da loja. */
+function awningTexture(color: number): THREE.CanvasTexture {
+  const cached = awningCache.get(color);
+  if (cached) return cached;
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 32;
+  const ctx = c.getContext('2d')!;
+  const hex = '#' + color.toString(16).padStart(6, '0');
+  for (let i = 0; i < 4; i++) {
+    ctx.fillStyle = i % 2 === 0 ? hex : '#f7f7f7';
+    ctx.fillRect(i * 16, 0, 16, 32);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  awningCache.set(color, tex);
+  return tex;
+}
+
+// --- Geometrias compartilhadas ---------------------------------------------
+
+const unitBox = new THREE.BoxGeometry(1, 1, 1);
+const unitPlane = new THREE.PlaneGeometry(1, 1);
+const pyramid = new THREE.ConeGeometry(0.95, 1, 4); // telhado de 4 águas
+
+// --- Construtores de imóveis ------------------------------------------------
+
+/** Adiciona a vitrine, o toldo e a placa virados para a rua. */
+function addStorefront(parent: THREE.Group, wx: number, wz: number, dir: Dir, shopIdx: number): void {
+  const fp = TILE * 0.85;
+  const front = new THREE.Group();
+  front.position.set(wx, 0, wz);
+  front.rotation.y = DIR_YAW[dir];
+  const zf = fp / 2;
+
+  // Vitrine (vidro escuro) — material compartilhado.
+  if (!glassMat) glassMat = new THREE.MeshStandardMaterial({ color: 0x1b2530, roughness: 0.2, metalness: 0.6 });
+  const glass = new THREE.Mesh(unitPlane, glassMat);
+  glass.position.set(0, 0.65, zf + 0.01);
+  glass.scale.set(fp * 0.78, 1.0, 1);
+  front.add(glass);
+
+  // Porta.
+  const door = new THREE.Mesh(unitBox, solidMat(0x3a2c20, 0.9));
+  door.position.set(fp * 0.28, 0.45, zf + 0.02);
+  door.scale.set(0.34, 0.9, 0.06);
+  front.add(door);
+
+  // Toldo listrado (levemente inclinado para fora) — material por cor.
+  const color = SHOPS[shopIdx].color;
+  let awnMat = awningMatCache.get(color);
+  if (!awnMat) {
+    awnMat = new THREE.MeshStandardMaterial({ map: awningTexture(color), roughness: 0.8 });
+    awningMatCache.set(color, awnMat);
+  }
+  const awn = new THREE.Mesh(unitBox, awnMat);
+  awn.position.set(0, 1.28, zf + 0.22);
+  awn.rotation.x = -0.35;
+  awn.scale.set(fp * 0.98, 0.07, 0.5);
+  awn.castShadow = true;
+  front.add(awn);
+
+  // Placa com nome + emoji — material por tipo de loja.
+  let signMat = signMatCache.get(shopIdx);
+  if (!signMat) {
+    const tex = signTexture(shopIdx);
+    signMat = new THREE.MeshStandardMaterial({
+      map: tex,
+      emissive: new THREE.Color(0xffffff),
+      emissiveMap: tex,
+      emissiveIntensity: 0.25,
+      roughness: 0.6,
+    });
+    signMatCache.set(shopIdx, signMat);
+  }
+  const sign = new THREE.Mesh(unitPlane, signMat);
+  sign.position.set(0, 1.92, zf + 0.02);
+  sign.scale.set(fp * 0.9, 0.5, 1);
+  front.add(sign);
+
+  parent.add(front);
+}
 
 export function buildCity(layout: CityLayout): THREE.Group {
   const city = new THREE.Group();
 
-  const unitBox = new THREE.BoxGeometry(1, 1, 1);
-  const plane = new THREE.PlaneGeometry(1, 1);
-
   // Chão (grama).
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(GRID_W * TILE + 8, GRID_H * TILE + 8),
-    new THREE.MeshStandardMaterial({ color: 0x6f9e57, roughness: 1 }),
+    solidMat(0x6f9e57, 1),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.02;
   ground.receiveShadow = true;
   city.add(ground);
 
-  // Ruas (asfalto) + faixa central.
-  const asphalt = new THREE.MeshStandardMaterial({ color: 0x33373f, roughness: 0.95 });
-  const laneMat = new THREE.MeshStandardMaterial({ color: 0xc9c987, roughness: 0.8 });
+  // Ruas + faixa central.
+  const asphalt = solidMat(0x33373f, 0.95);
+  const laneMat = solidMat(0xc9c987, 0.8);
   for (let x = 0; x < GRID_W; x++) {
     if (x % 5 !== 0) continue;
     const [wx] = worldPos(x, 0);
-    const road = new THREE.Mesh(plane, asphalt);
+    const road = new THREE.Mesh(unitPlane, asphalt);
     road.rotation.x = -Math.PI / 2;
     road.position.set(wx, 0, 0);
     road.scale.set(TILE, GRID_H * TILE + 8, 1);
     road.receiveShadow = true;
     city.add(road);
-    const lane = new THREE.Mesh(plane, laneMat);
+    const lane = new THREE.Mesh(unitPlane, laneMat);
     lane.rotation.x = -Math.PI / 2;
     lane.position.set(wx, 0.01, 0);
     lane.scale.set(0.12, GRID_H * TILE + 8, 1);
@@ -233,61 +392,114 @@ export function buildCity(layout: CityLayout): THREE.Group {
   for (let y = 0; y < GRID_H; y++) {
     if (y % 5 !== 0) continue;
     const [, wz] = worldPos(0, y);
-    const road = new THREE.Mesh(plane, asphalt);
+    const road = new THREE.Mesh(unitPlane, asphalt);
     road.rotation.x = -Math.PI / 2;
     road.position.set(0, 0, wz);
     road.scale.set(GRID_W * TILE + 8, TILE, 1);
     road.receiveShadow = true;
     city.add(road);
-    const lane = new THREE.Mesh(plane, laneMat);
+    const lane = new THREE.Mesh(unitPlane, laneMat);
     lane.rotation.x = -Math.PI / 2;
     lane.position.set(0, 0.01, wz);
     lane.scale.set(GRID_W * TILE + 8, 0.12, 1);
     city.add(lane);
   }
 
-  // Calçadas sob os prédios.
-  const sidewalkMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.95 });
-  for (const b of layout.buildings) {
-    const [wx, wz] = worldPos(b.x, b.y);
-    const sw = new THREE.Mesh(plane, sidewalkMat);
+  // Calçadas + imóveis.
+  const sidewalk = solidMat(0x9aa0a6, 0.95);
+  const houseWalls = [0xf2e2c4, 0xe7d3b3, 0xd9e3ec, 0xf0d8d8, 0xd8ecd9];
+  const shopWalls = [0xf6efe2, 0xeae1cf, 0xe8eef2];
+  const roofCols = [0xb5532e, 0x9c4733, 0x7d563b, 0x55606b];
+
+  for (const s of layout.structures) {
+    const [wx, wz] = worldPos(s.x, s.y);
+    const h = hash(s.x, s.y);
+
+    // Calçada sob o imóvel.
+    const sw = new THREE.Mesh(unitPlane, sidewalk);
     sw.rotation.x = -Math.PI / 2;
     sw.position.set(wx, 0.0, wz);
     sw.scale.set(TILE, TILE, 1);
     sw.receiveShadow = true;
     city.add(sw);
+
+    if (s.kind === 'building') {
+      const height = s.floors * FLOOR_H;
+      const fp = TILE * 0.8;
+      const mesh = new THREE.Mesh(unitBox, buildingMaterials(s.variant, s.floors));
+      mesh.scale.set(fp, height, fp);
+      mesh.position.set(wx, height / 2, wz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      city.add(mesh);
+      const cap = new THREE.Mesh(unitBox, solidMat(0x2b2f38, 0.9));
+      cap.scale.set(fp * 0.5, FLOOR_H * 0.4, fp * 0.5);
+      cap.position.set(wx, height + FLOOR_H * 0.2, wz);
+      cap.castShadow = true;
+      city.add(cap);
+      continue;
+    }
+
+    if (s.kind === 'house') {
+      const fp = TILE * 0.8;
+      const bodyH = 1.4 + (h % 2) * 0.4;
+      const body = new THREE.Mesh(unitBox, solidMat(houseWalls[h % houseWalls.length]));
+      body.scale.set(fp, bodyH, fp);
+      body.position.set(wx, bodyH / 2, wz);
+      body.castShadow = true;
+      body.receiveShadow = true;
+      city.add(body);
+
+      const roofH = 0.95;
+      const roof = new THREE.Mesh(pyramid, solidMat(roofCols[h % roofCols.length], 0.95));
+      roof.scale.set(fp * 0.62, roofH, fp * 0.62);
+      roof.rotation.y = Math.PI / 4;
+      roof.position.set(wx, bodyH + roofH / 2, wz);
+      roof.castShadow = true;
+      city.add(roof);
+
+      // Porta + janela na frente (voltada para a rua).
+      const front = new THREE.Group();
+      front.position.set(wx, 0, wz);
+      front.rotation.y = DIR_YAW[s.dir];
+      const zf = fp / 2;
+      const door = new THREE.Mesh(unitBox, solidMat(0x6b4a2b, 0.9));
+      door.position.set(-fp * 0.2, 0.42, zf + 0.02);
+      door.scale.set(0.32, 0.8, 0.06);
+      front.add(door);
+      const win = new THREE.Mesh(unitPlane, solidMat(0x9bd3e6, 0.3));
+      win.position.set(fp * 0.2, 0.85, zf + 0.02);
+      win.scale.set(0.42, 0.42, 1);
+      front.add(win);
+      city.add(front);
+      continue;
+    }
+
+    // s.kind === 'shop'
+    const fp = TILE * 0.85;
+    const bodyH = 2.2 + (h % 2) * 1.2;
+    const body = new THREE.Mesh(unitBox, solidMat(shopWalls[h % shopWalls.length]));
+    body.scale.set(fp, bodyH, fp);
+    body.position.set(wx, bodyH / 2, wz);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    city.add(body);
+    // Laje de topo.
+    const slab = new THREE.Mesh(unitBox, solidMat(0x40454d, 0.9));
+    slab.scale.set(fp * 1.02, 0.16, fp * 1.02);
+    slab.position.set(wx, bodyH + 0.08, wz);
+    slab.castShadow = true;
+    city.add(slab);
+    addStorefront(city, wx, wz, s.dir, s.shop);
   }
 
-  // Prédios.
-  for (const b of layout.buildings) {
-    const [wx, wz] = worldPos(b.x, b.y);
-    const height = b.floors * FLOOR_H;
-    const footprint = TILE * 0.8;
-    const mesh = new THREE.Mesh(unitBox, buildingMaterials(b.variant, b.floors));
-    mesh.scale.set(footprint, height, footprint);
-    mesh.position.set(wx, height / 2, wz);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    city.add(mesh);
-
-    // Detalhe de topo (casa de máquinas / telhado).
-    const cap = new THREE.Mesh(
-      unitBox,
-      new THREE.MeshStandardMaterial({ color: 0x2b2f38, roughness: 0.9 }),
-    );
-    cap.scale.set(footprint * 0.5, FLOOR_H * 0.5, footprint * 0.5);
-    cap.position.set(wx, height + FLOOR_H * 0.25, wz);
-    cap.castShadow = true;
-    city.add(cap);
-  }
-
-  // Árvores nas praças/parques.
+  // Árvores nas praças.
   const trunkGeo = new THREE.CylinderGeometry(0.12, 0.16, 1, 6);
-  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 1 });
+  const trunkMat = solidMat(0x6b4a2b, 1);
   const leafGeo = new THREE.IcosahedronGeometry(0.7, 0);
   const leafMat = new THREE.MeshStandardMaterial({ color: 0x2f7d3a, roughness: 1, flatShading: true });
   for (const p of layout.parks) {
-    if (hash(p.x, p.y) % 3 !== 0) continue; // espaça as árvores
+    if (hash(p.x, p.y) % 3 !== 0) continue;
     const [wx, wz] = worldPos(p.x, p.y);
     const trunk = new THREE.Mesh(trunkGeo, trunkMat);
     trunk.position.set(wx, 0.5, wz);
@@ -307,9 +519,7 @@ export function buildCity(layout: CityLayout): THREE.Group {
 
 export interface CarRoute {
   axis: 'x' | 'z';
-  /** linha fixa (em coordenada de mundo) da rua onde o carro anda. */
   fixed: number;
-  /** deslocamento lateral para a "mão" da via. */
   side: number;
   dir: 1 | -1;
   speed: number;
@@ -325,27 +535,11 @@ export function generateCarRoutes(): CarRoute[] {
 
   roadRows.forEach((y, i) => {
     const [, wz] = worldPos(0, y);
-    routes.push({
-      axis: 'x',
-      fixed: wz,
-      side: 0.5,
-      dir: i % 2 === 0 ? 1 : -1,
-      speed: 3 + i,
-      offset: i * 7,
-      color: colors[i % colors.length],
-    });
+    routes.push({ axis: 'x', fixed: wz, side: 0.5, dir: i % 2 === 0 ? 1 : -1, speed: 3 + i, offset: i * 7, color: colors[i % colors.length] });
   });
   roadCols.forEach((x, i) => {
     const [wx] = worldPos(x, 0);
-    routes.push({
-      axis: 'z',
-      fixed: wx,
-      side: 0.5,
-      dir: i % 2 === 0 ? -1 : 1,
-      speed: 3 + (i % 3),
-      offset: i * 5,
-      color: colors[(i + 3) % colors.length],
-    });
+    routes.push({ axis: 'z', fixed: wx, side: 0.5, dir: i % 2 === 0 ? -1 : 1, speed: 3 + (i % 3), offset: i * 5, color: colors[(i + 3) % colors.length] });
   });
   return routes;
 }
