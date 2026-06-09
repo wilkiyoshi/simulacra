@@ -117,15 +117,26 @@ npm run dev:server            # http://localhost:3001
 
 ## 5. Deploy no GitHub Pages
 
-O workflow `.github/workflows/deploy.yml` faz build do `client/` e publica.
+A versão de produção (estática) já está commitada na pasta **`docs/`**. Para
+publicar, basta apontar o Pages para ela — **um único passo, uma vez**:
 
-**Passo único de configuração (uma vez):** no repositório, vá em
-**Settings → Pages → Build and deployment → Source** e selecione
-**GitHub Actions**.
+1. Repositório → **Settings → Pages**.
+2. Em **Build and deployment → Source**, escolha **Deploy from a branch**.
+3. **Branch**: `claude/serene-fermat-3ktmv3` · **Folder**: `/docs` → **Save**.
+4. Aguarde ~1–2 min e acesse **https://wilkiyoshi.github.io/simulacra/**.
 
-A cada push para a branch (ou via "Run workflow"), o Actions builda e publica.
-O site fica em `https://wilkiyoshi.github.io/simulacra/`. Abra a aba ⚙️, cole
-sua chave da Anthropic e injete personas.
+Para atualizar o site depois de mudar o código:
+
+```bash
+npm run build --workspace=@simulacra/client
+rm -rf docs && cp -r client/dist docs && touch docs/.nojekyll
+git add docs && git commit -m "chore: rebuild docs" && git push
+```
+
+> **Alternativa (GitHub Actions como Source):** existe também
+> `.github/workflows/deploy.yml` (manual, via *Run workflow*). Requer
+> **Settings → Pages → Source: GitHub Actions** e que o token do Actions tenha
+> permissão para o Pages — por isso o método `/docs` acima é o padrão.
 
 ---
 

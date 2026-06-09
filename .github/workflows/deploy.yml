@@ -1,11 +1,9 @@
 name: Deploy GitHub Pages
 
-# Publica o frontend (client-only) no GitHub Pages.
-# Pré-requisito: em Settings → Pages, defina "Source: GitHub Actions".
-
+# Método alternativo (opcional): publicar via "GitHub Actions" como Source.
+# O método PADRÃO deste repo é servir a pasta /docs por "Deploy from a branch"
+# (não exige permissões especiais do token). Por isso este workflow é manual.
 on:
-  push:
-    branches: [claude/serene-fermat-3ktmv3, main]
   workflow_dispatch:
 
 permissions:
