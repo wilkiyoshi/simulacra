@@ -299,6 +299,8 @@ function awningTexture(color: number): THREE.CanvasTexture {
 const unitBox = new THREE.BoxGeometry(1, 1, 1);
 const unitPlane = new THREE.PlaneGeometry(1, 1);
 const pyramid = new THREE.ConeGeometry(0.95, 1, 4); // telhado de 4 águas
+const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 1, 8);
+const bulbGeo = new THREE.SphereGeometry(0.08, 12, 12);
 
 // --- Construtores de imóveis ------------------------------------------------
 
@@ -493,26 +495,137 @@ export function buildCity(layout: CityLayout): THREE.Group {
     addStorefront(city, wx, wz, s.dir, s.shop);
   }
 
-  // Árvores nas praças.
+  // Árvores e bancos nas praças.
   const trunkGeo = new THREE.CylinderGeometry(0.12, 0.16, 1, 6);
   const trunkMat = solidMat(0x6b4a2b, 1);
   const leafGeo = new THREE.IcosahedronGeometry(0.7, 0);
   const leafMat = new THREE.MeshStandardMaterial({ color: 0x2f7d3a, roughness: 1, flatShading: true });
   for (const p of layout.parks) {
-    if (hash(p.x, p.y) % 3 !== 0) continue;
+    const m = hash(p.x, p.y) % 3;
     const [wx, wz] = worldPos(p.x, p.y);
-    const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-    trunk.position.set(wx, 0.5, wz);
-    trunk.castShadow = true;
-    city.add(trunk);
-    const leaf = new THREE.Mesh(leafGeo, leafMat);
-    leaf.position.set(wx, 1.4, wz);
-    leaf.scale.setScalar(0.9 + (hash(p.x, p.y) % 5) * 0.08);
-    leaf.castShadow = true;
-    city.add(leaf);
+    if (m === 0) {
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(wx, 0.5, wz);
+      trunk.castShadow = true;
+      city.add(trunk);
+      const leaf = new THREE.Mesh(leafGeo, leafMat);
+      leaf.position.set(wx, 1.4, wz);
+      leaf.scale.setScalar(0.9 + (hash(p.x, p.y) % 5) * 0.08);
+      leaf.castShadow = true;
+      city.add(leaf);
+    } else if (m === 1) {
+      addBench(city, wx, wz, (hash(p.x, p.y) % 4) * (Math.PI / 2));
+    }
   }
 
+  // Mobiliário urbano: faixas de pedestre, semáforos e postes.
+  addStreetProps(city);
+
   return city;
+}
+
+/** Banco de praça (assento, encosto e pés). */
+function addBench(city: THREE.Group, x: number, z: number, rotY: number): void {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  g.rotation.y = rotY;
+  const wood = solidMat(0x7a5230, 0.9);
+  const seat = new THREE.Mesh(unitBox, wood);
+  seat.scale.set(0.9, 0.08, 0.34);
+  seat.position.set(0, 0.35, 0);
+  seat.castShadow = true;
+  g.add(seat);
+  const back = new THREE.Mesh(unitBox, wood);
+  back.scale.set(0.9, 0.3, 0.07);
+  back.position.set(0, 0.55, -0.14);
+  g.add(back);
+  for (const sx of [-0.38, 0.38]) {
+    const leg = new THREE.Mesh(unitBox, solidMat(0x40454d));
+    leg.scale.set(0.07, 0.35, 0.3);
+    leg.position.set(sx, 0.17, 0);
+    g.add(leg);
+  }
+  city.add(g);
+}
+
+/** Faixas de pedestre, semáforos e postes de luz nos cruzamentos internos. */
+function addStreetProps(city: THREE.Group): void {
+  const white = solidMat(0xeaeaea, 0.7);
+  const poleMat = solidMat(0x2c2f36, 0.6);
+  const cols = [5, 10, 15, 20];
+  const rows = [5, 10, 15];
+
+  for (const ix of cols) {
+    for (const iy of rows) {
+      const [wx, wz] = worldPos(ix, iy);
+      // Faixas de pedestre (zebra) nos quatro braços.
+      const barLen = TILE * 0.9;
+      const gap = 0.18;
+      for (const sgn of [1, -1]) {
+        for (let k = 0; k < 3; k++) {
+          const nb = new THREE.Mesh(unitPlane, white);
+          nb.rotation.x = -Math.PI / 2;
+          nb.position.set(wx, 0.012, wz + sgn * (TILE * 0.7 + k * gap));
+          nb.scale.set(barLen, 0.12, 1);
+          city.add(nb);
+          const eb = new THREE.Mesh(unitPlane, white);
+          eb.rotation.x = -Math.PI / 2;
+          eb.position.set(wx + sgn * (TILE * 0.7 + k * gap), 0.012, wz);
+          eb.scale.set(0.12, barLen, 1);
+          city.add(eb);
+        }
+      }
+      // Semáforo num canto, poste no canto oposto.
+      addTrafficLight(city, poleMat, wx + TILE / 2 + 0.35, wz + TILE / 2 + 0.35);
+      addLampPost(city, poleMat, wx - TILE / 2 - 0.35, wz - TILE / 2 - 0.35);
+    }
+  }
+}
+
+function addTrafficLight(city: THREE.Group, poleMat: THREE.Material, x: number, z: number): void {
+  const pole = new THREE.Mesh(poleGeo, poleMat);
+  pole.scale.set(1, 2.6, 1);
+  pole.position.set(x, 1.3, z);
+  pole.castShadow = true;
+  city.add(pole);
+  const box = new THREE.Mesh(unitBox, solidMat(0x1b1f26));
+  box.scale.set(0.28, 0.72, 0.22);
+  box.position.set(x, 2.65, z);
+  box.castShadow = true;
+  city.add(box);
+  const bulbs = [
+    { c: 0xff3b30, e: 0.25, y: 2.86 },
+    { c: 0xffcc00, e: 0.25, y: 2.65 },
+    { c: 0x34c759, e: 1.1, y: 2.44 },
+  ];
+  for (const b of bulbs) {
+    const bulb = new THREE.Mesh(
+      bulbGeo,
+      new THREE.MeshStandardMaterial({ color: b.c, emissive: b.c, emissiveIntensity: b.e }),
+    );
+    bulb.scale.setScalar(0.85);
+    bulb.position.set(x, b.y, z + 0.12);
+    city.add(bulb);
+  }
+}
+
+function addLampPost(city: THREE.Group, poleMat: THREE.Material, x: number, z: number): void {
+  const pole = new THREE.Mesh(poleGeo, poleMat);
+  pole.scale.set(1, 2.4, 1);
+  pole.position.set(x, 1.2, z);
+  pole.castShadow = true;
+  city.add(pole);
+  const arm = new THREE.Mesh(unitBox, poleMat);
+  arm.scale.set(0.5, 0.06, 0.06);
+  arm.position.set(x + 0.2, 2.35, z);
+  city.add(arm);
+  const bulb = new THREE.Mesh(
+    bulbGeo,
+    new THREE.MeshStandardMaterial({ color: 0xfff1c2, emissive: 0xfff1c2, emissiveIntensity: 1.1 }),
+  );
+  bulb.scale.setScalar(1.5);
+  bulb.position.set(x + 0.42, 2.3, z);
+  city.add(bulb);
 }
 
 // --- Rotas dos carros (decorativos) ----------------------------------------

@@ -8,12 +8,13 @@ import { useState } from 'react';
 import { WorldContextForm } from './WorldContextForm';
 import { PersonaInjectionForm } from './PersonaInjectionForm';
 import { SettingsForm } from './SettingsForm';
+import { InsightsPanel } from './InsightsPanel';
 import { useWorldStore } from '../store/useWorldStore';
 
-type Tab = 'mundo' | 'persona' | 'habitantes' | 'config';
+type Tab = 'mundo' | 'twin' | 'insights' | 'habitantes' | 'config';
 
 export function Dashboard() {
-  const [tab, setTab] = useState<Tab>('persona');
+  const [tab, setTab] = useState<Tab>('twin');
   const snapshot = useWorldStore((s) => s.snapshot);
 
   return (
@@ -24,8 +25,9 @@ export function Dashboard() {
       </header>
 
       <nav className="flex border-b border-slate-800 text-xs">
-        <TabBtn active={tab === 'persona'} onClick={() => setTab('persona')}>Persona</TabBtn>
+        <TabBtn active={tab === 'twin'} onClick={() => setTab('twin')}>Digital Twin</TabBtn>
         <TabBtn active={tab === 'mundo'} onClick={() => setTab('mundo')}>Contexto</TabBtn>
+        <TabBtn active={tab === 'insights'} onClick={() => setTab('insights')}>Insights</TabBtn>
         <TabBtn active={tab === 'habitantes'} onClick={() => setTab('habitantes')}>
           Habitantes ({snapshot?.agents.length ?? 0})
         </TabBtn>
@@ -33,8 +35,9 @@ export function Dashboard() {
       </nav>
 
       <div className="flex-1 overflow-y-auto p-4">
-        {tab === 'persona' && <PersonaInjectionForm />}
+        {tab === 'twin' && <PersonaInjectionForm />}
         {tab === 'mundo' && <WorldContextForm />}
+        {tab === 'insights' && <InsightsPanel />}
         {tab === 'habitantes' && <AgentList />}
         {tab === 'config' && <SettingsForm />}
       </div>
@@ -45,7 +48,7 @@ export function Dashboard() {
 function AgentList() {
   const agents = useWorldStore((s) => s.snapshot?.agents ?? []);
   if (agents.length === 0) {
-    return <p className="text-sm text-slate-500">Nenhum habitante ainda. Injete uma persona para começar.</p>;
+    return <p className="text-sm text-slate-500">Nenhum habitante ainda. Injete um digital twin para começar.</p>;
   }
   return (
     <ul className="space-y-2">

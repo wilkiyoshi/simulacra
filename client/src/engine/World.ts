@@ -1,10 +1,10 @@
 /**
  * World.ts (navegador)
  * --------------------
- * Sandbox da simulação rodando no navegador: contexto global, grade espacial,
- * coleção de agentes e o loop de ticks. A cada tick, cada agente decide sua
- * ação, anda um passo, e pares adjacentes podem conversar. Emite snapshots
- * para os observadores (a cena Phaser, via store).
+ * Sandbox da simulação no navegador: contexto global, grade espacial, agentes
+ * e o loop de ticks. A cada tick os digital twins decidem ações, andam (com
+ * leve atração social para se encontrarem) e pares próximos conversam — gerando
+ * balões de fala. Também mantém um log de eventos que alimenta os Insights.
  */
 import { nanoid } from 'nanoid';
 import { GenerativeAgent } from './GenerativeAgent';
@@ -19,9 +19,19 @@ import type {
 
 export const GRID_WIDTH = 25;
 export const GRID_HEIGHT = 18;
-const INTERACTION_RADIUS = 1;
+/** Distância (Manhattan) que dispara uma interação entre dois twins. */
+const INTERACTION_RADIUS = 2;
+/** Máximo de conversas iniciadas por tick (controla custo de LLM). */
+const MAX_CONVERSATIONS_PER_TICK = 2;
 
 export type WorldListener = (snapshot: WorldSnapshot) => void;
+
+/** Evento observável da cidade (para o módulo de Insights). */
+export interface WorldEvent {
+  tick: number;
+  kind: 'action' | 'talk';
+  text: string;
+}
 
 export class World {
   private context: WorldContext = {
@@ -40,6 +50,9 @@ export class World {
 
   private simClock = Date.now();
   private readonly SIM_MINUTES_PER_TICK = 30;
+
+  /** Buffer de eventos recentes consumido pelo observador de Insights. */
+  private events: WorldEvent[] = [];
 
   constructor(private readonly tickIntervalMs: number) {}
 
@@ -65,6 +78,7 @@ export class World {
         );
       }
     }
+    this.pushEvent('action', `${injection.core.name} chegou à cidade.`);
     this.broadcast();
     return agent.toRuntimeState();
   }
@@ -87,6 +101,18 @@ export class World {
       width: GRID_WIDTH,
       height: GRID_HEIGHT,
     };
+  }
+
+  /** Retorna e limpa o buffer de eventos (consumido pelo observador). */
+  takeEvents(): WorldEvent[] {
+    const e = this.events;
+    this.events = [];
+    return e;
+  }
+
+  private pushEvent(kind: WorldEvent['kind'], text: string): void {
+    this.events.push({ tick: this.tick, kind, text });
+    if (this.events.length > 250) this.events.splice(0, this.events.length - 250);
   }
 
   private broadcast(): void {
@@ -115,7 +141,8 @@ export class World {
       for (const agent of agents) {
         const perception = this.describeSurroundings(agent);
         await agent.tick(this.context, perception, this.simClock);
-        this.wander(agent);
+        this.move(agent, agents);
+        this.pushEvent('action', `${agent.core.name}: ${agent.toRuntimeState().currentAction}`);
       }
       await this.resolveInteractions(agents);
       this.broadcast();
@@ -127,14 +154,24 @@ export class World {
     }
   }
 
+  /** Pares próximos conversam (limitado por tick); registra os diálogos. */
   private async resolveInteractions(agents: GenerativeAgent[]): Promise<void> {
-    for (let i = 0; i < agents.length; i++) {
-      for (let j = i + 1; j < agents.length; j++) {
+    let conversations = 0;
+    const talked = new Set<string>();
+    for (let i = 0; i < agents.length && conversations < MAX_CONVERSATIONS_PER_TICK; i++) {
+      for (let j = i + 1; j < agents.length && conversations < MAX_CONVERSATIONS_PER_TICK; j++) {
         const a = agents[i];
         const b = agents[j];
+        if (talked.has(a.id) || talked.has(b.id)) continue;
         if (this.distance(a.getPosition(), b.getPosition()) <= INTERACTION_RADIUS) {
           const line = await a.converse(b, this.simClock);
-          if (line) await b.converse(a, this.simClock);
+          if (!line) continue;
+          this.pushEvent('talk', `${a.core.name} → ${b.core.name}: "${line}"`);
+          talked.add(a.id);
+          const reply = await b.converse(a, this.simClock);
+          if (reply) this.pushEvent('talk', `${b.core.name} → ${a.core.name}: "${reply}"`);
+          talked.add(b.id);
+          conversations += 1;
         }
       }
     }
@@ -149,6 +186,53 @@ export class World {
     return nearby.length > 0
       ? `${base} Por perto: ${nearby.join(', ')}.`
       : `${base} Não há ninguém por perto.`;
+  }
+
+  /** Movimento: às vezes ruma ao twin mais próximo (socialização), senão vagueia. */
+  private move(agent: GenerativeAgent, agents: GenerativeAgent[]): void {
+    const pos = agent.getPosition();
+    if (Math.random() < 0.55 && agents.length > 1) {
+      const other = this.nearestOther(agent, agents);
+      if (other) {
+        const np = other.getPosition();
+        const dist = this.distance(pos, np);
+        if (dist <= INTERACTION_RADIUS) return; // já perto: fica para conversar
+        const dx = Math.sign(np.x - pos.x);
+        const dy = Math.sign(np.y - pos.y);
+        let step: Position = { x: 0, y: 0 };
+        let facing: Facing = agent.toRuntimeState().facing;
+        if (Math.abs(np.x - pos.x) >= Math.abs(np.y - pos.y) && dx !== 0) {
+          step = { x: dx, y: 0 };
+          facing = dx > 0 ? 'right' : 'left';
+        } else if (dy !== 0) {
+          step = { x: 0, y: dy };
+          facing = dy > 0 ? 'down' : 'up';
+        }
+        agent.setPosition(
+          {
+            x: clamp(pos.x + step.x, 0, GRID_WIDTH - 1),
+            y: clamp(pos.y + step.y, 0, GRID_HEIGHT - 1),
+          },
+          facing,
+        );
+        return;
+      }
+    }
+    this.wander(agent);
+  }
+
+  private nearestOther(agent: GenerativeAgent, agents: GenerativeAgent[]): GenerativeAgent | null {
+    let best: GenerativeAgent | null = null;
+    let bd = Infinity;
+    for (const o of agents) {
+      if (o.id === agent.id) continue;
+      const d = this.distance(agent.getPosition(), o.getPosition());
+      if (d < bd) {
+        bd = d;
+        best = o;
+      }
+    }
+    return best;
   }
 
   private wander(agent: GenerativeAgent): void {

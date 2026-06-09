@@ -46,7 +46,7 @@ export function PersonaInjectionForm() {
       setStatus({ kind: 'err', msg: 'Nome, ocupação e traços são obrigatórios.' });
       return;
     }
-    setStatus({ kind: 'loading', msg: 'Injetando persona na cidade...' });
+    setStatus({ kind: 'loading', msg: 'Injetando digital twin na cidade...' });
 
     // Cada linha não-vazia vira uma memória/relacionamento separado.
     const payload: PersonaInjection = {
@@ -136,7 +136,7 @@ export function PersonaInjectionForm() {
       </Field>
 
       <button type="submit" disabled={status?.kind === 'loading'} className={btnCls}>
-        {status?.kind === 'loading' ? 'Injetando...' : '+ Injetar persona'}
+        {status?.kind === 'loading' ? 'Injetando...' : '+ Injetar digital twin'}
       </button>
 
       {status && status.kind !== 'loading' && (
