@@ -1,14 +1,11 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Proxy /api e /socket.io para o backend em dev, evitando problemas de CORS.
+// `base: './'` gera caminhos relativos, então o build funciona tanto em
+// localhost quanto sob o subcaminho do GitHub Pages (ex.: /simulacra/).
+// A simulação roda 100% no navegador, então não há mais proxy para backend.
 export default defineConfig({
+  base: './',
   plugins: [react()],
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': 'http://localhost:3001',
-      '/socket.io': { target: 'http://localhost:3001', ws: true },
-    },
-  },
+  server: { port: 5173 },
 });

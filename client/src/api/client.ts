@@ -1,48 +1,32 @@
 /**
  * client.ts
  * ---------
- * Cliente da API: REST (fetch) para mutações + Socket.IO para o stream do mundo.
+ * Antes falava com um backend via REST + Socket.IO. Agora a simulação roda
+ * inteira no navegador, então estas funções apenas delegam ao singleton
+ * `simulation`. As assinaturas foram mantidas para não mexer nos componentes.
  */
-import { io, type Socket } from 'socket.io-client';
+import { simulation } from '../engine/simulation';
+import { hasLLM } from '../store/useSettings';
 import type { PersonaInjection, WorldContext, WorldSnapshot } from '../types';
 
-let socket: Socket | null = null;
-
-/** Conecta ao stream em tempo real do mundo. */
+/** Inscreve para receber snapshots do mundo a cada tick. */
 export function connectWorld(onUpdate: (snap: WorldSnapshot) => void): () => void {
-  socket = io({ path: '/socket.io' });
-  socket.on('world:update', onUpdate);
-  return () => {
-    socket?.off('world:update', onUpdate);
-    socket?.disconnect();
-    socket = null;
-  };
+  return simulation.subscribe(onUpdate);
 }
 
 export async function fetchHealth(): Promise<{ status: string; llm: string }> {
-  const res = await fetch('/api/health');
-  return res.json();
+  return {
+    status: 'ok',
+    llm: hasLLM() ? 'conectado (navegador)' : 'modo simulado (configure sua chave)',
+  };
 }
 
 /** Atualiza o contexto global da cidade (formulário do "Deus"). */
 export async function updateWorldContext(ctx: Partial<WorldContext>): Promise<void> {
-  const res = await fetch('/api/world/context', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(ctx),
-  });
-  if (!res.ok) throw new Error('Falha ao atualizar o contexto da cidade.');
+  simulation.setContext(ctx);
 }
 
-/** Injeta uma nova persona na cidade em tempo real. */
+/** Injeta uma nova persona na cidade. */
 export async function injectPersona(persona: PersonaInjection): Promise<void> {
-  const res = await fetch('/api/personas', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(persona),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body?.error ? 'Dados inválidos.' : 'Falha ao injetar persona.');
-  }
+  await simulation.addPersona(persona);
 }

@@ -83,25 +83,49 @@ simulacra/
 
 ---
 
-## 4. Como rodar
+## 4. Dois modos de execução
+
+### A) Web / GitHub Pages (client-only) — recomendado para acessar online
+A simulação inteira (Memory Stream, Retrieval, Reflection, Planning e as
+chamadas ao LLM) roda **no navegador**. Não há backend — por isso funciona no
+GitHub Pages, que só serve arquivos estáticos.
+
+- **Chave da API**: configurada na própria interface (aba ⚙️). Fica salva
+  **somente no seu navegador** (`localStorage`) e pode ser apagada a qualquer
+  momento. As chamadas vão direto do navegador para a Anthropic
+  (`dangerouslyAllowBrowser`). Sem chave, a cidade roda em "modo simulado".
 
 ```bash
-# 1. Instalar dependências (workspaces)
 npm install
-
-# 2. Configurar o ambiente do backend
-cp .env.example server/.env
-#   edite server/.env e cole sua ANTHROPIC_API_KEY
-#   (sem chave, roda em "modo simulado")
-
-# 3. Subir backend e frontend
-npm run dev:server      # http://localhost:3001
 npm run dev:client      # http://localhost:5173
 ```
 
-Abra `http://localhost:5173`, vá à aba **Nova Persona**, preencha e clique em
-**Injetar persona**. O agente aparece na cidade e começa a viver sua rotina;
-ao se aproximar de outro, balões de fala mostram a conversa gerada pelo LLM.
+### B) Backend Node (self-host opcional)
+O servidor original (`server/`) permanece para quem quiser rodar a cognição no
+backend com SQLite persistente. Veja `.env.example`.
+
+```bash
+cp .env.example server/.env   # cole ANTHROPIC_API_KEY
+npm run dev:server            # http://localhost:3001
+```
+
+> Como usar: aba **Persona** → preencha → **Injetar persona**. O agente aparece
+> na cidade e vive sua rotina; ao se aproximar de outro, balões de fala mostram
+> a conversa gerada pelo LLM. A aba **⚙️** guarda/apaga a chave da API.
+
+---
+
+## 5. Deploy no GitHub Pages
+
+O workflow `.github/workflows/deploy.yml` faz build do `client/` e publica.
+
+**Passo único de configuração (uma vez):** no repositório, vá em
+**Settings → Pages → Build and deployment → Source** e selecione
+**GitHub Actions**.
+
+A cada push para a branch (ou via "Run workflow"), o Actions builda e publica.
+O site fica em `https://wilkiyoshi.github.io/simulacra/`. Abra a aba ⚙️, cole
+sua chave da Anthropic e injete personas.
 
 ---
 

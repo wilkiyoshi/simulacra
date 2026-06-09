@@ -7,9 +7,10 @@
 import { useState } from 'react';
 import { WorldContextForm } from './WorldContextForm';
 import { PersonaInjectionForm } from './PersonaInjectionForm';
+import { SettingsForm } from './SettingsForm';
 import { useWorldStore } from '../store/useWorldStore';
 
-type Tab = 'mundo' | 'persona' | 'habitantes';
+type Tab = 'mundo' | 'persona' | 'habitantes' | 'config';
 
 export function Dashboard() {
   const [tab, setTab] = useState<Tab>('persona');
@@ -22,18 +23,20 @@ export function Dashboard() {
         <p className="text-xs text-slate-400">Painel do "Deus" da cidade • tick {snapshot?.tick ?? 0}</p>
       </header>
 
-      <nav className="flex border-b border-slate-800 text-sm">
-        <TabBtn active={tab === 'persona'} onClick={() => setTab('persona')}>Nova Persona</TabBtn>
+      <nav className="flex border-b border-slate-800 text-xs">
+        <TabBtn active={tab === 'persona'} onClick={() => setTab('persona')}>Persona</TabBtn>
         <TabBtn active={tab === 'mundo'} onClick={() => setTab('mundo')}>Contexto</TabBtn>
         <TabBtn active={tab === 'habitantes'} onClick={() => setTab('habitantes')}>
           Habitantes ({snapshot?.agents.length ?? 0})
         </TabBtn>
+        <TabBtn active={tab === 'config'} onClick={() => setTab('config')}>⚙️</TabBtn>
       </nav>
 
       <div className="flex-1 overflow-y-auto p-4">
         {tab === 'persona' && <PersonaInjectionForm />}
         {tab === 'mundo' && <WorldContextForm />}
         {tab === 'habitantes' && <AgentList />}
+        {tab === 'config' && <SettingsForm />}
       </div>
     </aside>
   );

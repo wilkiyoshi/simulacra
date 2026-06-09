@@ -50,3 +50,19 @@ export interface PersonaInjection {
   relationships: string[];
   spawn?: Position;
 }
+
+/** Os três tipos de nó que vivem no Memory Stream. */
+export type MemoryKind = 'observation' | 'reflection' | 'plan';
+
+/** Um registro do Memory Stream (frase em linguagem natural + metadados). */
+export interface MemoryRecord {
+  id: string;
+  agentId: string;
+  kind: MemoryKind;
+  description: string;
+  createdAt: number;
+  lastAccessedAt: number;
+  importance: number;
+  embedding: number[];
+  evidence?: string[];
+}
