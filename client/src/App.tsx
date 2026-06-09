@@ -4,7 +4,7 @@
  * Layout principal: área de simulação (Phaser) à esquerda e dashboard à direita.
  * O selo de status do LLM reage à chave configurada nas Configurações.
  */
-import { PhaserGame } from './game/PhaserGame';
+import { CityCanvas } from './game/city3d/CityCanvas';
 import { Dashboard } from './dashboard/Dashboard';
 import { useSettings } from './store/useSettings';
 
@@ -25,7 +25,7 @@ export function App() {
           </span>
         </div>
         <div className="flex-1 min-h-0">
-          <PhaserGame />
+          <CityCanvas />
         </div>
       </main>
       <Dashboard />
