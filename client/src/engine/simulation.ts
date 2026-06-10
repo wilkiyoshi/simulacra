@@ -6,6 +6,8 @@
  */
 import { World } from './World';
 import { observe } from './observer';
+import { seedBrazilianPopulation } from './seedPopulation';
+import { cityMap } from '../city/map';
 import { useInsights } from '../store/useInsights';
 import type { PersonaInjection, WorldContext, WorldSnapshot } from '../types';
 
@@ -16,6 +18,15 @@ const INSIGHT_INTERVAL_MS = 30000;
 
 const world = new World(TICK_INTERVAL_MS);
 world.start();
+
+// De partida, povoa a cidade com 5 digital twins brasileiros aleatórios,
+// posicionados em calçadas (tiles caminháveis).
+void (async () => {
+  for (const twin of seedBrazilianPopulation()) {
+    twin.spawn = cityMap.randomSpawn();
+    await world.addPersona(twin);
+  }
+})();
 
 let observing = false;
 

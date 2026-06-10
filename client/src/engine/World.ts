@@ -8,6 +8,7 @@
  */
 import { nanoid } from 'nanoid';
 import { GenerativeAgent } from './GenerativeAgent';
+import { cityMap } from '../city/map';
 import type {
   AgentRuntimeState,
   Facing,
@@ -67,7 +68,7 @@ export class World {
 
   async addPersona(injection: PersonaInjection): Promise<AgentRuntimeState> {
     const id = nanoid();
-    const spawn = injection.spawn ?? this.randomFreeTile();
+    const spawn = injection.spawn ?? cityMap.randomSpawn();
     const agent = await GenerativeAgent.create(id, injection, spawn, this.simClock);
     this.agents.set(id, agent);
     for (const other of this.agents.values()) {
@@ -75,6 +76,7 @@ export class World {
         await other.perceive(
           `${injection.core.name} (${injection.core.occupation}) chegou à cidade.`,
           this.simClock,
+          4,
         );
       }
     }
@@ -188,37 +190,65 @@ export class World {
       : `${base} Não há ninguém por perto.`;
   }
 
-  /** Movimento: às vezes ruma ao twin mais próximo (socialização), senão vagueia. */
+  /** Passos válidos a partir de `pos` (apenas tiles caminháveis = física). */
+  private steps(pos: Position): { to: Position; facing: Facing; road: boolean }[] {
+    const opts: { d: Position; f: Facing }[] = [
+      { d: { x: 0, y: -1 }, f: 'up' },
+      { d: { x: 0, y: 1 }, f: 'down' },
+      { d: { x: -1, y: 0 }, f: 'left' },
+      { d: { x: 1, y: 0 }, f: 'right' },
+    ];
+    const res: { to: Position; facing: Facing; road: boolean }[] = [];
+    for (const o of opts) {
+      const nx = pos.x + o.d.x;
+      const ny = pos.y + o.d.y;
+      if (cityMap.isWalkable(nx, ny)) {
+        res.push({ to: { x: nx, y: ny }, facing: o.f, road: cityMap.isRoad(nx, ny) });
+      }
+    }
+    return res;
+  }
+
+  /** Movimento: às vezes ruma ao twin mais próximo (socialização), senão vagueia.
+   *  Só anda por calçadas/praças; cruza ruas apenas quando necessário. */
   private move(agent: GenerativeAgent, agents: GenerativeAgent[]): void {
     const pos = agent.getPosition();
+    const steps = this.steps(pos);
+    if (steps.length === 0) return; // sem saída (raro): fica parado
+
+    // Socialização: caminhar reduzindo a distância até o vizinho mais próximo.
     if (Math.random() < 0.55 && agents.length > 1) {
       const other = this.nearestOther(agent, agents);
       if (other) {
         const np = other.getPosition();
-        const dist = this.distance(pos, np);
-        if (dist <= INTERACTION_RADIUS) return; // já perto: fica para conversar
-        const dx = Math.sign(np.x - pos.x);
-        const dy = Math.sign(np.y - pos.y);
-        let step: Position = { x: 0, y: 0 };
-        let facing: Facing = agent.toRuntimeState().facing;
-        if (Math.abs(np.x - pos.x) >= Math.abs(np.y - pos.y) && dx !== 0) {
-          step = { x: dx, y: 0 };
-          facing = dx > 0 ? 'right' : 'left';
-        } else if (dy !== 0) {
-          step = { x: 0, y: dy };
-          facing = dy > 0 ? 'down' : 'up';
+        if (this.distance(pos, np) <= INTERACTION_RADIUS) return; // já perto: conversa
+        const current = this.distance(pos, np);
+        const better = steps
+          .filter((s) => this.distance(s.to, np) < current)
+          .sort((a, b) => Number(a.road) - Number(b.road)); // prefere calçada
+        if (better.length > 0) {
+          agent.setPosition(better[0].to, better[0].facing);
+          return;
         }
-        agent.setPosition(
-          {
-            x: clamp(pos.x + step.x, 0, GRID_WIDTH - 1),
-            y: clamp(pos.y + step.y, 0, GRID_HEIGHT - 1),
-          },
-          facing,
-        );
-        return;
       }
     }
-    this.wander(agent);
+
+    // Passeio com viés para calçada (evita o meio da rua).
+    const pick = this.weightedStep(steps);
+    if (pick) agent.setPosition(pick.to, pick.facing);
+  }
+
+  private weightedStep(
+    steps: { to: Position; facing: Facing; road: boolean }[],
+  ): { to: Position; facing: Facing } | null {
+    const weights = steps.map((s) => (s.road ? 0.18 : 1));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let r = Math.random() * total;
+    for (let i = 0; i < steps.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return steps[i];
+    }
+    return steps[steps.length - 1] ?? null;
   }
 
   private nearestOther(agent: GenerativeAgent, agents: GenerativeAgent[]): GenerativeAgent | null {
@@ -235,37 +265,7 @@ export class World {
     return best;
   }
 
-  private wander(agent: GenerativeAgent): void {
-    const pos = agent.getPosition();
-    const moves: { d: Position; f: Facing }[] = [
-      { d: { x: 0, y: -1 }, f: 'up' },
-      { d: { x: 0, y: 1 }, f: 'down' },
-      { d: { x: -1, y: 0 }, f: 'left' },
-      { d: { x: 1, y: 0 }, f: 'right' },
-      { d: { x: 0, y: 0 }, f: 'down' },
-    ];
-    const pick = moves[Math.floor(Math.random() * moves.length)];
-    agent.setPosition(
-      {
-        x: clamp(pos.x + pick.d.x, 0, GRID_WIDTH - 1),
-        y: clamp(pos.y + pick.d.y, 0, GRID_HEIGHT - 1),
-      },
-      pick.f,
-    );
-  }
-
-  private randomFreeTile(): Position {
-    return {
-      x: Math.floor(Math.random() * GRID_WIDTH),
-      y: Math.floor(Math.random() * GRID_HEIGHT),
-    };
-  }
-
   private distance(a: Position, b: Position): number {
     return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   }
-}
-
-function clamp(v: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, v));
 }

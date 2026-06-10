@@ -92,8 +92,8 @@ export class GenerativeAgent {
     }
   }
 
-  async perceive(observation: string, now: number): Promise<void> {
-    await this.memory.add('observation', observation, now);
+  async perceive(observation: string, now: number, importance?: number): Promise<void> {
+    await this.memory.add('observation', observation, now, importance !== undefined ? { importance } : {});
   }
 
   async converse(other: GenerativeAgent, now: number): Promise<string | null> {
@@ -105,7 +105,7 @@ export class GenerativeAgent {
       await this.memory.add('observation', `Eu disse para ${other.core.name}: "${line}"`, now, {
         importance: 4,
       });
-      await other.perceive(`${this.core.name} me disse: "${line}"`, now);
+      await other.perceive(`${this.core.name} me disse: "${line}"`, now, 4);
     }
     return line;
   }

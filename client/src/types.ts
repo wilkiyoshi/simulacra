@@ -8,6 +8,8 @@ export interface PersonaCore {
   appearance: string;
   traits: string;
   spriteKey: string;
+  /** Tom de pele (hex) para o personagem 3D — diversidade da população. */
+  skin?: string;
 }
 
 export interface Position {
