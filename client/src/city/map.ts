@@ -88,7 +88,11 @@ export interface BuildingStruct {
   variant: number;
   shop: number;
   dir: Dir; // fachada voltada para a rua
+  /** Tile de calçada em frente (porta de entrada). */
+  entrance?: Tile;
 }
+
+const DELTA: Record<Dir, [number, number]> = { n: [0, -1], s: [0, 1], e: [1, 0], w: [-1, 0] };
 
 export type ParkKind = 'tree' | 'bench' | 'open';
 export interface ParkCell {
@@ -107,13 +111,20 @@ export interface CityMap {
   structures: BuildingStruct[];
   sidewalks: Tile[];
   park: ParkCell[];
+  /** Imóveis em que se pode entrar (lojas e casas), com entrada definida. */
+  pois: BuildingStruct[];
   /** Tiles bloqueados (prédios, árvores, bancos). */
   blocked: Set<string>;
   isWalkable(x: number, y: number): boolean;
   isRoad(x: number, y: number): boolean;
   isSidewalk(x: number, y: number): boolean;
+  /** Tile de loja/casa em que um personagem pode entrar. */
+  isEnterable(x: number, y: number): boolean;
+  structAt(x: number, y: number): BuildingStruct | undefined;
   /** Tile de calçada aleatório (ponto de spawn seguro). */
   randomSpawn(): Tile;
+  /** Converte posição de mundo (X,Z) para coordenada de tile. */
+  tileFromWorld(wx: number, wz: number): Tile;
 }
 
 /** Direção da rua mais próxima (para orientar a fachada). */
@@ -174,18 +185,44 @@ function createCityMap(): CityMap {
     }
   }
 
+  // Indexa imóveis por tile e calcula a entrada (calçada em frente).
+  const structTiles = new Map<string, BuildingStruct>();
+  const pois: BuildingStruct[] = [];
+  for (const s of structures) {
+    structTiles.set(keyOf(s.x, s.y), s);
+    const [dx, dy] = DELTA[s.dir];
+    const ex = s.x + dx;
+    const ey = s.y + dy;
+    if (sidewalkSet.has(keyOf(ex, ey))) {
+      s.entrance = { x: ex, y: ey };
+      if (s.kind !== 'building') pois.push(s);
+    }
+  }
+
+  const isEnterable = (x: number, y: number): boolean => {
+    const s = structTiles.get(keyOf(x, y));
+    return !!s && s.kind !== 'building';
+  };
+
   return {
     structures,
     sidewalks,
     park,
+    pois,
     blocked,
     isWalkable: (x, y) => inBounds(x, y) && !blocked.has(keyOf(x, y)),
     isRoad,
     isSidewalk: (x, y) => sidewalkSet.has(keyOf(x, y)),
+    isEnterable,
+    structAt: (x, y) => structTiles.get(keyOf(x, y)),
     randomSpawn: () => {
       if (sidewalks.length === 0) return { x: 1, y: 1 };
       return { ...sidewalks[Math.floor(Math.random() * sidewalks.length)] };
     },
+    tileFromWorld: (wx, wz) => ({
+      x: Math.max(0, Math.min(GRID_W - 1, Math.round(wx / TILE + (GRID_W - 1) / 2))),
+      y: Math.max(0, Math.min(GRID_H - 1, Math.round(wz / TILE + (GRID_H - 1) / 2))),
+    }),
   };
 }
 

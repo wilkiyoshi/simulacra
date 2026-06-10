@@ -64,4 +64,10 @@ export const simulation = {
   getContext(): WorldContext {
     return world.getContext();
   },
+  setControlled(id: string, on: boolean): void {
+    world.setControlled(id, on);
+  },
+  placeAgent(id: string, tile: { x: number; y: number }): void {
+    world.placeAgentTile(id, tile);
+  },
 };

@@ -1,28 +1,23 @@
 /**
  * CityCanvas.tsx
  * --------------
- * Renderizador 3D (Three.js + react-three-fiber). Lê os snapshots do mundo e
- * posiciona os digital twins nas calçadas (o motor já garante que só andam em
- * tiles caminháveis), com prédios, lojas, ruas, carros, sombras e câmera
- * orbital. As cores de pele refletem a diversidade configurada em cada twin.
+ * Renderizador 3D (Three.js + react-three-fiber). Observador orbital por
+ * padrão; ao CLICAR num personagem entra em 1ª pessoa controlável
+ * (W/S andar, A/D virar, ESC sair). Personagens andam nas calçadas e podem
+ * entrar nos imóveis (salas sem teto com mobília).
  */
 import { useEffect, useMemo, useRef } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Sky, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { connectWorld } from '../../api/client';
 import { useWorldStore } from '../../store/useWorldStore';
+import { useView } from '../../store/useView';
 import type { AgentRuntimeState, Facing } from '../../types';
 import { buildCity } from './build';
-import { worldPos, generateCarRoutes, WORLD_SPAN_X, WORLD_SPAN_Z, type CarRoute } from '../../city/map';
+import { cityMap, worldPos, generateCarRoutes, WORLD_SPAN_X, WORLD_SPAN_Z, type CarRoute } from '../../city/map';
 
-const FACING_ROT: Record<Facing, number> = {
-  down: 0,
-  up: Math.PI,
-  left: Math.PI / 2,
-  right: -Math.PI / 2,
-};
-
+const FACING_ROT: Record<Facing, number> = { down: 0, up: Math.PI, left: Math.PI / 2, right: -Math.PI / 2 };
 const DEFAULT_SKIN = '#e7b48f';
 
 function StaticCity() {
@@ -39,7 +34,6 @@ function Agent3D({ agent }: { agent: AgentRuntimeState }) {
     for (const ch of agent.core.spriteKey + agent.core.name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     return new THREE.Color(`hsl(${h % 360}, 60%, 55%)`);
   }, [agent.core.spriteKey, agent.core.name]);
-
   const skin = useMemo(() => new THREE.Color(agent.core.skin ?? DEFAULT_SKIN), [agent.core.skin]);
 
   const [wx, wz] = worldPos(agent.position.x, agent.position.y);
@@ -56,13 +50,19 @@ function Agent3D({ agent }: { agent: AgentRuntimeState }) {
     let d = FACING_ROT[agent.facing] - g.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     g.rotation.y += d * Math.min(1, delta * 6);
-    if (bodyRef.current) {
-      bodyRef.current.position.y = agent.isMoving ? Math.abs(Math.sin(state.clock.elapsedTime * 8)) * 0.12 : 0;
-    }
+    if (bodyRef.current) bodyRef.current.position.y = agent.isMoving ? Math.abs(Math.sin(state.clock.elapsedTime * 8)) * 0.12 : 0;
   });
 
   return (
-    <group ref={ref}>
+    <group
+      ref={ref}
+      onClick={(e) => {
+        e.stopPropagation();
+        useView.getState().enterFp(agent.id, agent.core.name, agent.position, agent.facing);
+      }}
+      onPointerOver={() => (document.body.style.cursor = 'pointer')}
+      onPointerOut={() => (document.body.style.cursor = 'auto')}
+    >
       <group ref={bodyRef}>
         <mesh position={[-0.12, 0.28, 0]} castShadow>
           <boxGeometry args={[0.16, 0.55, 0.18]} />
@@ -76,7 +76,6 @@ function Agent3D({ agent }: { agent: AgentRuntimeState }) {
           <boxGeometry args={[0.42, 0.55, 0.26]} />
           <meshStandardMaterial color={shirt} roughness={0.7} />
         </mesh>
-        {/* braços (tom de pele) */}
         <mesh position={[-0.27, 0.85, 0]} castShadow>
           <boxGeometry args={[0.1, 0.5, 0.16]} />
           <meshStandardMaterial color={skin} roughness={0.6} />
@@ -114,7 +113,6 @@ function Agent3D({ agent }: { agent: AgentRuntimeState }) {
 function Car({ route }: { route: CarRoute }) {
   const ref = useRef<THREE.Group>(null);
   const span = route.axis === 'x' ? WORLD_SPAN_X : WORLD_SPAN_Z;
-
   useFrame((state) => {
     const g = ref.current;
     if (!g) return;
@@ -129,7 +127,6 @@ function Car({ route }: { route: CarRoute }) {
       g.rotation.y = route.dir > 0 ? 0 : Math.PI;
     }
   });
-
   return (
     <group ref={ref}>
       <mesh position={[0, 0.18, 0]} castShadow>
@@ -163,15 +160,66 @@ function Car({ route }: { route: CarRoute }) {
   );
 }
 
+/** Recoloca a câmera na posição de observador (ao voltar da 1ª pessoa). */
+function CameraDefault() {
+  const { camera } = useThree();
+  useEffect(() => {
+    camera.position.set(38, 32, 44);
+    camera.lookAt(0, 1, 0);
+  }, [camera]);
+  return null;
+}
+
+/** Controle em 1ª pessoa: teclado move/gira a câmera respeitando colisões. */
+function FirstPersonRig() {
+  const { camera } = useThree();
+  const keys = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    const dn = (e: KeyboardEvent) => (keys.current[e.code] = true);
+    const up = (e: KeyboardEvent) => (keys.current[e.code] = false);
+    window.addEventListener('keydown', dn);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', dn);
+      window.removeEventListener('keyup', up);
+    };
+  }, []);
+
+  useFrame((_, delta) => {
+    const v = useView.getState();
+    if (v.mode !== 'fp') return;
+    let { x, z, heading } = v.fp;
+    const turn = 2.2 * delta;
+    if (keys.current['ArrowLeft'] || keys.current['KeyA']) heading += turn;
+    if (keys.current['ArrowRight'] || keys.current['KeyD']) heading -= turn;
+    const fwd = keys.current['ArrowUp'] || keys.current['KeyW'] ? 1 : keys.current['ArrowDown'] || keys.current['KeyS'] ? -1 : 0;
+    if (fwd !== 0) {
+      const speed = 3.4 * delta * fwd;
+      const nx = x + Math.sin(heading) * speed;
+      const nz = z + Math.cos(heading) * speed;
+      const tile = cityMap.tileFromWorld(nx, nz);
+      if (cityMap.isWalkable(tile.x, tile.y) || cityMap.isEnterable(tile.x, tile.y)) {
+        x = nx;
+        z = nz;
+      }
+    }
+    useView.setState({ fp: { x, z, heading } });
+    camera.position.set(x, 1.5, z);
+    camera.lookAt(x + Math.sin(heading), 1.35, z + Math.cos(heading));
+  });
+  return null;
+}
+
 function Scene() {
   const agents = useWorldStore((s) => s.snapshot?.agents ?? []);
+  const mode = useView((s) => s.mode);
+  const controlledId = useView((s) => s.controlledId);
   const routes = useMemo(() => generateCarRoutes(), []);
 
   return (
     <>
       <Sky sunPosition={[40, 30, 20]} turbidity={6} rayleigh={1.2} />
       <fog attach="fog" args={[0xcfe0f0, 60, 130]} />
-
       <hemisphereLight args={[0xbfd4ff, 0x4a4636, 0.7]} />
       <ambientLight intensity={0.25} />
       <directionalLight
@@ -192,31 +240,55 @@ function Scene() {
       {routes.map((r, i) => (
         <Car key={i} route={r} />
       ))}
-      {agents.map((a) => (
+      {agents.filter((a) => !(mode === 'fp' && a.id === controlledId)).map((a) => (
         <Agent3D key={a.id} agent={a} />
       ))}
 
-      <OrbitControls
-        makeDefault
-        enableDamping
-        dampingFactor={0.08}
-        target={[0, 1, 0]}
-        minDistance={14}
-        maxDistance={90}
-        maxPolarAngle={Math.PI / 2.15}
-      />
+      {mode === 'fp' ? (
+        <FirstPersonRig />
+      ) : (
+        <>
+          <CameraDefault />
+          <OrbitControls makeDefault enableDamping dampingFactor={0.08} target={[0, 1, 0]} minDistance={14} maxDistance={90} maxPolarAngle={Math.PI / 2.15} />
+        </>
+      )}
     </>
   );
 }
 
 export function CityCanvas() {
   useEffect(() => connectWorld((snap) => useWorldStore.getState().setSnapshot(snap)), []);
+  const mode = useView((s) => s.mode);
+  const name = useView((s) => s.controlledName);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') useView.getState().exitFp();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
-    <div className="h-full w-full overflow-hidden rounded-xl border border-slate-800 shadow-2xl">
+    <div className="relative h-full w-full overflow-hidden rounded-xl border border-slate-800 shadow-2xl">
       <Canvas shadows dpr={[1, 2]} camera={{ position: [38, 32, 44], fov: 45, near: 0.1, far: 400 }} gl={{ antialias: true }}>
         <Scene />
       </Canvas>
+
+      {mode === 'observer' ? (
+        <div className="pointer-events-none absolute left-3 top-3 rounded bg-black/55 px-2 py-1 text-[11px] text-slate-200">
+          Clique num personagem para vê-lo em 1ª pessoa
+        </div>
+      ) : (
+        <div className="absolute left-3 top-3 flex items-center gap-3 rounded bg-black/70 px-3 py-2 text-xs text-white">
+          <span>
+            👁️ <b>{name}</b> — <b>W/S</b> andar · <b>A/D</b> virar · <b>ESC</b> sair
+          </span>
+          <button onClick={() => useView.getState().exitFp()} className="rounded bg-rose-600/90 px-2 py-0.5 font-semibold hover:bg-rose-600">
+            Sair
+          </button>
+        </div>
+      )}
     </div>
   );
 }

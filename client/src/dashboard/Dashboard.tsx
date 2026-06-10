@@ -21,7 +21,7 @@ export function Dashboard() {
     <aside className="w-[380px] shrink-0 h-full bg-panel/60 border-l border-slate-800 flex flex-col">
       <header className="p-4 border-b border-slate-800">
         <h1 className="text-lg font-bold text-accent">Simulacra</h1>
-        <p className="text-xs text-slate-400">Painel do "Deus" da cidade • tick {snapshot?.tick ?? 0}</p>
+        <p className="text-xs text-slate-400">Painel do "Criador" da cidade • tick {snapshot?.tick ?? 0}</p>
       </header>
 
       <nav className="flex border-b border-slate-800 text-xs">

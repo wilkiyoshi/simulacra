@@ -14,6 +14,8 @@ import type {
 import { MemoryStream } from './MemoryStream';
 import { Reflection, REFLECTION_THRESHOLD } from './Reflection';
 import { Planning, type TickDecision } from './Planning';
+import { completeJSON } from './llm';
+import { hasLLM } from '../store/useSettings';
 import type { WorldContext } from '../types';
 
 export class GenerativeAgent {
@@ -122,6 +124,76 @@ export class GenerativeAgent {
 
   clearSpeech(): void {
     this.speech = null;
+  }
+
+  setSpeech(text: string | null): void {
+    this.speech = text;
+  }
+
+  /**
+   * Gera um pequeno diálogo (2 a 4 falas) entre este twin e `other` numa única
+   * chamada ao LLM. Registra as falas na memória de ambos e devolve a sequência
+   * para o World exibir nos balões.
+   */
+  async dialogueWith(
+    other: GenerativeAgent,
+    now: number,
+  ): Promise<{ who: 'self' | 'other'; text: string }[]> {
+    const hint =
+      this.relationships.get(other.core.name) ??
+      other.relationships.get(this.core.name) ??
+      'não se conhecem bem.';
+
+    let lines: { who: 'A' | 'B'; text: string }[];
+    if (!hasLLM()) {
+      lines = [
+        { who: 'A', text: `Oi, ${other.core.name}! Tudo bem?` },
+        { who: 'B', text: `Tudo certo, ${this.core.name}! Bom te ver.` },
+      ];
+    } else {
+      try {
+        const res = await completeJSON<{ lines: { who: string; text: string }[] }>({
+          system:
+            'Você escreve um diálogo curto, natural e coloquial em português brasileiro ' +
+            'entre dois moradores que se cruzam na rua. 2 a 4 falas curtas, alternadas, ' +
+            'começando por A. Mantenha coerência com a personalidade de cada um.',
+          prompt:
+            `A = ${this.core.name} (${this.core.occupation}); traços: ${this.core.traits}.\n` +
+            `B = ${other.core.name} (${other.core.occupation}); traços: ${other.core.traits}.\n` +
+            `Relação: ${hint}\n\nGere o diálogo.`,
+          deep: false,
+          maxTokens: 300,
+          schema: {
+            type: 'object',
+            properties: {
+              lines: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: { who: { type: 'string', enum: ['A', 'B'] }, text: { type: 'string' } },
+                  required: ['who', 'text'],
+                },
+              },
+            },
+            required: ['lines'],
+          },
+        });
+        lines = (res.lines ?? []).slice(0, 4).map((l) => ({ who: /^a/i.test(l.who) ? 'A' : 'B', text: l.text }));
+        if (lines.length === 0) throw new Error('vazio');
+      } catch {
+        lines = [{ who: 'A', text: `Olá, ${other.core.name}!` }];
+      }
+    }
+
+    const out: { who: 'self' | 'other'; text: string }[] = [];
+    for (const l of lines) {
+      const speaker = l.who === 'A' ? this : other;
+      const listener = l.who === 'A' ? other : this;
+      await speaker.perceive(`Eu disse para ${listener.core.name}: "${l.text}"`, now, 4);
+      await listener.perceive(`${speaker.core.name} me disse: "${l.text}"`, now, 4);
+      out.push({ who: l.who === 'A' ? 'self' : 'other', text: l.text });
+    }
+    return out;
   }
 
   private applyDecision(decision: TickDecision): void {
